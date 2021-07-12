@@ -1,0 +1,238 @@
+---
+title: "Untitled"
+author: "Group_13"
+date: "2021/7/9"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r loadpackages, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(skimr)
+library(janitor)
+library(moderndive)
+library(infer)
+library(broom)
+library(knitr)
+library(gridExtra)
+library(GGally)
+library(kableExtra)
+library(corrplot)
+library(RColorBrewer)
+#library(olsrr)
+library(car)
+library(forcats)
+library(ggfortify)
+library(gapminder)
+library(sjPlot)
+library(stats)
+library(jtools)
+library(olsrr)
+```
+
+# Interst Question
+What influence do different features of coffee have on whether the quality of a batch of coffee is classified as good or poor?
+
+# Data Discription
+* country_of_origin – Country where the coffee bean originates from.  
+* aroma – Aroma grade (ranging from 0-10)  
+* flavor – Flavour grade (ranging from 0-10)  
+* acidity – Acidity grade (ranging from 0-10)  
+* category_two_defects – Count of category 2 type defects in the batch of coffee beans tested.  
+* altitiude_mean_meters – Mean altitude of the growers farm (in metres)  
+* harvested – Year the batch was harvested  
+* Qualityclass – Quality score for the batch (Good - ≥82.5, Poor - <82.5). Note: 82.5 was selected as the cut off as this is the median score for all the batches tested.  
+
+# Explantory Data Analysis
+
+```{r data, echo = FALSE, eval = TRUE, warning = FALSE}
+coffee <- read.csv("dataset13.csv",  fileEncoding = "UTF-8-BOM")
+coffee <- coffee %>% mutate(Qualityclass = as.factor(Qualityclass), 
+                            country_of_origin = as.factor(country_of_origin))
+
+#change order for good and poor; take the poor as the response baseline
+coffee$Qualityclass <- factor(coffee$Qualityclass, levels = c('Poor', 'Good'))
+
+coffee.NoNa <- coffee %>% na.omit()
+```
+
+## Statistical summaries of the data
+
+Let's show the numerical statistics of our data set.
+
+```{r}
+skim(coffee)
+```
+Missing values:
+altitude_mean_meters: 201
+harvested:             60
+
+Outliers:
+aroma, flavor, acidity, category_two_defects: p0 = zeros
+category_two_defects:         p100 = 55
+altitude_mean_meters: p0 = 1; p100 = 190164 (impossible high)
+
+
+```{r}
+#Guatemala: altitude_mean_meters 190164
+#the highest elevation: 7492m 
+#ref: https://en.wikipedia.org/wiki/List_of_elevation_extremes_by_country
+
+#View the outliers altitude_mean_meters:190164, 190164, 110000, 11000
+coffee.NoNa %>% top_n(n=10, wt = altitude_mean_meters) %>% arrange(desc(altitude_mean_meters))
+
+coffee.No_NaOutliers <- coffee.NoNa %>% filter(altitude_mean_meters != 190164 & 
+                                                altitude_mean_meters != 110000 &
+                                                 altitude_mean_meters != 11000)
+
+
+#Not quite sure the altitude_mean_meters == 1, should be dropped
+coffee.No_NaOutliers %>% select(country_of_origin, altitude_mean_meters) %>% arrange(altitude_mean_meters)
+
+#View the outlier in aroma, flavor, acidity = 0 is Honduras
+coffee.No_NaOutliers %>% filter(aroma == 0)
+coffee.No_NaOutliers_keepHonduras <- coffee.No_NaOutliers
+coffee.No_NaOutliers <- coffee.No_NaOutliers %>% filter(aroma != 0)
+
+
+skim(coffee.No_NaOutliers_keepHonduras)
+skim(coffee.No_NaOutliers)
+
+```
+
+#Graph
+
+```{r cor}
+ggpairs(coffee.No_NaOutliers[c(-1,-7)], aes(alpha = 0.4))
+```
+flavor & aroma   = 0.725
+flavor & acidity = 0.744
+aroma  & acidity = 0.591
+an outlier?
+
+```{r boxplot}
+coffee.No_NaOutliers %>% ggplot(aes(x = country_of_origin, y = altitude_mean_meters))+
+  geom_boxplot()
+
+coffee.NoNa %>% ggplot(aes(x = country_of_origin, y = category_two_defects))+
+  geom_boxplot()
+```
+
+
+
+[1] "aroma"                "flavor"               "acidity"             
+[4] "category_two_defects" "altitude_mean_meters" "Qualityclass"
+
+```{r m1}
+m1 <- glm(Qualityclass ~ ., family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1, -7)]) #no years & country
+
+summary(m1) #AIC 562.26
+summ(m1)
+```
+
+```{r plot_m1_log-odds}
+plot_model(m1, show.values = TRUE, transform = NULL,
+           title = "Log-Odds", show.p = FALSE)
+```
+
+```{r m2 no_altitude_mean_meters}
+m2 <- glm(Qualityclass ~ aroma + flavor + acidity + category_two_defects, family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1, -7)]) #no years & country
+
+summary(m2) #566.59
+```
+
+```{r m3_no_category_two_defects}
+m3 <- glm(Qualityclass ~ aroma + flavor + acidity + altitude_mean_meters, family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1, -7)]) #no years & country
+
+summary(m3) #560.26 (the best one)
+#The best one is m3, explanatory variables: flavor + aroma + acidity + altitude_mean_meters
+```
+the positive coef for flavor covariate suggests that a higher chance of good quality for higher grade of flavor.
+
+
+```{r m4_no_0_estimates}
+m4 <- glm(Qualityclass ~ aroma + flavor + acidity, family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1, -7)]) #no years & country
+
+summary(m4) #564.62
+```
+
+```{r stepwise}
+full.m1 <- m1
+full.m2 <- glm(Qualityclass ~ ., family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1)]) #include harvested(year) as explanatory variable
+
+#The same as m3 (full.m1,full.m2 are the same)
+both.frmFull<-step(full.m2, scope = list(upper = full.m2),direction = 'both') 
+
+#The same as m3 (full.m1,full.m2 are the same)
+null <- glm(Qualityclass ~ 1, family = binomial(link = "logit"), data = coffee.No_NaOutliers[,c(-1)])
+both.frmNull<-step(null, scope = list(upper = full.m2),direction = 'both') 
+```
+The best one is m3, explanatory variables: flavor + aroma + acidity + altitude_mean_meters
+
+```{r deviance check}
+m3$null.deviance - m3$deviance > qchisq(df = m3$df.null-m3$df.residual, 0.95)
+#APM page 19 (compare null model)
+#True = reject null hypothesis
+```
+We can reject null hypothesis, and conclude that flavor + aroma + acidity + altitude_mean_meters are significant term in the model.
+
+```{r vif}
+vif(m3)
+```
+Use vif for this?
+they all below 10
+
+
+```{r Hosmer-Lemeshow goodness of fit test}
+source(url("http://www.chrisbilder.com/categorical/Chapter5/AllGOFTests.R"))
+HLTest(m3, g =10)
+HLTest(m3, g =6)
+```
+When fitted value group into 10 classes, p-value = 3.638e-09
+When fitted value group into 6 classes, p-value = 0.002889
+The p-value is not large; this indicates that the m3 is not a good fit for the data (observed frequencies are far from expected frequencies)
+However, some expected counts are less than 5; this suggests that the chi-squared approximation my not be very reliable for these data
+
+```{r anova for m3}
+anova(m3)
+qchisq(df = 10, p = 0.95)
+```
+It can be perceived that the largest reduction in residual deviance comes from aroma(472.06) and the smallest reduction in residual deviance is altitude_mean_meters(6.35). We could try a model without altitude_mean_meters as the resulting reduction in deviance(6.35) is smaller than the 95th percentile of $X^2(10)$ distribution 18.30704. This will be m4 model which includes aroma, flavor, acidity.
+
+
+
+```{r plot_m3_log-odds}
+plot_model(m3, show.values = TRUE, transform = NULL,
+           title = "Log-Odds", show.p = FALSE)
+```
+
+```{r  plot_m3_odds}
+plot_model(m3, show.values = TRUE,
+           title = "Odds", show.p = FALSE)
+```
+
+```{r test}
+plot_model(m3, type = 'pred', terms = c("flavor", "aroma", "acidity", "altitude_mean_meters"))
+```
+
+
+```{r plot_m3 glm repectively}
+plot_model(m3, type = "pred", title = "")
+```
+
+
+```{r glm coffee.No_NaOutliers_keepHonduras}
+#problem over-fitted since  
+glm(Qualityclass ~ ., family = binomial(link = "logit"), data = coffee.No_NaOutliers_keepHonduras[,c(-1, -7)])
+```
+
+
+
+```{r}
+library(glmnet)
+autoplot(m3)
+```
+
