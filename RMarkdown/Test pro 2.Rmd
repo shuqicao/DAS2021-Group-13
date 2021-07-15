@@ -1,0 +1,319 @@
+---
+title: "Test pro 2"
+author: "Yuqi Pan"
+output:
+  pdf_document:
+          latex_engine: pdflatex
+          number_sections: yes
+fig_caption: yes
+---
+
+
+```{r loadpackages, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(moderndive)
+library(infer)
+library(broom)
+library(knitr)
+library(gridExtra)
+library(GGally)
+library(kableExtra)
+library(corrplot)
+library(RColorBrewer)
+library(skimr)
+library(sjPlot)
+library(car)
+library(ROCR)
+```
+
+# Data description 
+
+**Research Question: What influence do different features of coffee have on whether the quality of a batch of coffee is classified as good or poor?**
+
+**Response variable**: 
+
+`Qualityclass`: Quality score for the batch (Good >=82.5, Poor <82.5). Note: 82.5
+was selected as the cut off as this is the median score for all the batches tested.
+
+**Explanatory variables**: 
+
+* `country_of_origin`: Country where the coffee bean originates from. 
+
+* `aroma`: Aroma grade(ranging from 1-10)
+
+* `flavor`: Flavor grade(ranging from 1-10)
+
+* `acidity`: Acidity grade (ranging from 0-10)
+
+* `category_two_defects`: Count of category 2 type defects in the batch of coffee beans
+tested.
+
+* `altitiude_mean_meters`: Mean altitude of the growers farm (in metres)
+
+* `harvested`: Year the batch was harvested
+
+```{r data,echo=FALSE,eval=TRUE,warning=TRUE}
+coffee<-read.csv("dataset13.csv")
+glimpse(coffee)
+```
+
+# Explanatory Data Analysis
+
+The summary statistics are tabled below:
+```{r summary,echo=FALSE,eval=TRUE}
+coffee.sum<-coffee%>%select(-c(1,8))
+coffee.sum %>%
+  skim()%>%
+  select(c(2,3,5,6,7,9,11)) %>%
+  kable(col.names=c("Variables","Missing","Mean","SD","Min","Median","Max"),
+          booktabs=TRUE, linesep="", digits=2, caption = 
+          '\\label{tab:summaries} Summary statistics on all numerical variables') %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+From the summary statistics, we noticed that there are many missing data in altitude mean and harvested year. 
+
+* Replace `altitude` with mean
+
+```{r replace1,echo=FALSE,eval=TRUE}
+coffee1<-coffee
+coffee1[is.na(coffee1$altitude_mean_meters),]$altitude_mean_meters<-mean(coffee$altitude_mean_meters,na.rm=TRUE)
+median(coffee1$altitude_mean_meters)
+my.skim1<-coffee1%>%
+  skim()
+as.data.frame(my.skim1[7,c(2,3)])
+#glimpse(coffee1)
+```
+
+* Replace `harvested` with median
+
+Since the mean and median of harvested is almost the same, which are 2013.67 and 2014 respectively. We replace the missing value of harvested with the median `2014`.
+
+```{r replace2,echo=FALSE, eval=TRUE}
+coffee1[is.na(coffee1$harvested),]$harvested <- median(coffee$harvested,na.rm=TRUE)
+my.skim2<-coffee1%>%
+  skim()
+as.data.frame(my.skim2[8,c(2,3)])
+#View(coffee1)
+```
+
+## Visualize the data
+Let's visualize the data first:
+
+```{r visual, echo=FALSE, eval=TRUE}
+coffee.mod<-coffee1[,-1]
+ggpairs(coffee.mod,lower=list(continuous=wrap("points",alpha=0.4)))
+```
+
+We can notice from the correlation coefficient that there is a strong relationship between acidity and flavor of 0.817. Harvested and altitude mean are slightly related with quality class.
+*Also aroma, flavor, acidity, category two defects, and altitude are skew*
+
+# Formal Analysis
+
+## Model 1
+
+Firstly, we need to split the data as training data and test data to test how the model are working aiming to choose the model with the best performance.
+
+```{r spliting, echo= FALSE, eval=TRUE}
+set.seed(714)
+coffee.mod$Qualityclass<-as.factor(coffee.mod$Qualityclass)
+#View(coffee.mod)
+#dim(coffee.mod)
+n<-nrow(coffee.mod)
+ind1<-sample(c(1:n),round(n/2))
+ind2<-sample(c(1:n),round(n/4))
+ind3<-setdiff(c(1:n),c(ind1,ind2))
+training.data<-coffee.mod[ind1,]
+test.data<-coffee.mod[ind2,]
+#View(test.data)
+```
+
+
+
+```{r model1, echo=FALSE, eval=TRUE,warning=FALSE}
+mod1<-glm(Qualityclass~.,family=binomial(link="logit"),data=training.data)
+mod1%>%
+  summary()
+mod1.aic<-mod1$aic
+confint(mod1)%>%
+  kable(digit=3) %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod1, show.values=TRUE,transform=NULL,show.p=TRUE)
+
+vif(mod1) %>%
+  kable(
+  digits = 3,
+  caption = "Variance inflation factor (VIF)",
+  booktabs = TRUE
+  ) %>%
+kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+Also from VIF table, we can tell that there is no multicolinearity problem between acidity and flavor.
+
+Since the 95% confidence interval of altitude is not clear, we will calculate it in another way:
+
+```{r ci,echo=FALSE, eval=TRUE}
+mod.coef.logodds <- mod1 %>%
+                      summary() %>%
+                      coef()
+altitude.logodds.lower <- mod.coef.logodds["altitude_mean_meters", "Estimate"] - 
+                      1.96 * mod.coef.logodds["altitude_mean_meters", "Std. Error"]
+altitude.logodds.upper <- mod.coef.logodds["altitude_mean_meters", "Estimate"] + 
+                      1.96 * mod.coef.logodds["altitude_mean_meters", "Std. Error"]
+altitude.ci<-c(altitude.logodds.lower,altitude.logodds.upper)
+altitude.ci
+```
+
+Variables of category two defects, altitude and harvested include zero. Drop them.
+
+And AIC of model 1 is: `r mod1.aic`
+
+## Model 2
+```{r mod2, echo=FALSE,eval=TRUE,warning=FALSE}
+#View(training.data)
+training.data2<-training.data[,-c(4,5,6)]
+#View(training.data2)
+mod2<-glm(Qualityclass~.,data=training.data2,family=binomial)
+mod2%>%
+  summary()
+confint(mod2)%>%
+  kable(digit=3) %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod2, show.values=TRUE,transform=NULL,show.p=TRUE)
+mod2.aic<-mod2$aic
+```
+
+All the 95% confidence interval of explanatory variables does not include zero and the AIC of model 2 is `r mod2.aic`, which is smaller than AIC of model 1. We can consider this model as our final model.
+
+## Model 3 (with log transformation)
+
+Since the distribution of almost every variable is slightly skewed, we can take log transformation to solve this problem.
+
+```{r transform, echo=FALSE, eval=TRUE}
+coffee.log<-matrix(nrow=1145,ncol=7)
+colnames(coffee.log)<-c("log.aroma","log.flavor","log.acidity","category","log.altitude","harvested","Qualityclass")
+coffee.log<-as.data.frame(coffee.log)
+coffee.log$log.aroma<-log(coffee.mod$aroma)
+coffee.log$log.flavor<-log(coffee.mod$flavor)
+coffee.log$log.acidity<-log(coffee.mod$acidity)
+coffee.log$category<-coffee.mod$category_two_defects
+coffee.log$harvested<-coffee.mod$harvested
+coffee.log$log.altitude<-log(coffee.mod$altitude_mean_meters)
+coffee.log$Qualityclass<-as.factor(coffee.mod$Qualityclass)
+ggpairs(coffee.log[-929,])
+coffee.log<-coffee.log[-929,]
+#coffee.mod[(coffee.mod$aroma==0)|(coffee.mod$acidity==0)|(coffee.mod$acidity==0),]
+```
+
+Fit model 3:
+
+```{r mod3,echo=FALSE, eval=TRUE}
+set.seed(7144)
+n<-nrow(coffee.log)
+ind1.log<-sample(c(1:n),round(n/2))
+ind2.log<-sample(c(1:n),round(n/4))
+ind3.log<-setdiff(c(1:n),c(ind1.log,ind2.log))
+training.data3<-coffee.log[ind1.log,]
+test.data3<-coffee.log[ind2.log,]
+mod3<-glm(Qualityclass~.,data=training.data3,family=binomial)
+mod3%>%
+  summary()
+confint(mod3)%>%
+  kable(digit=3) %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod3, show.values=TRUE,transform=NULL,show.p=TRUE)
+mod3.aic<-mod3$aic
+```
+
+AIC of model 3 is `r mod3.aic`.
+Since 95% confidence interval of category, log altitude and harvested include zero, drop these three variables.
+
+Fit model 4.
+
+## Model 4 (drop category, log altitude and harvested)
+
+```{r mod4, echo=FALSE, eval=TRUE}
+training.data4<-training.data3[,-c(4,5,6)]
+mod4<-glm(Qualityclass~.,family=binomial,data=training.data4)
+mod4%>%
+  summary()
+confint(mod4)%>%
+  kable(digit=3) %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod4, show.values=TRUE,transform=NULL,show.p=TRUE)
+mod4.aic<-mod4$aic
+```
+AIC of all the four models are listed below:
+
+```{r aic,echo=FALSE,eval=TRUE}
+mod.com1<-glance(mod1)
+mod.com2<-glance(mod2)
+mod.com3<-glance(mod3)
+mod.com4<-glance(mod4)
+Models <- c("Mod1","Mod2","Mod3","Mod4")
+bind_rows(mod.com1,mod.com2,mod.com3,mod.com4,.id="Model") %>%
+  mutate(Model=Models) %>%
+  kable(
+    digits = 2,
+    caption = "Model comparison values for different models",
+  )%>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+# Assessing model fit
+
+Plot the AUC value of models:
+```{r fit,echo=FALSE,eval=TRUE,fig.align='center',fig.cap="\\label{fig:auc1} AUC of model 1", warning=FALSE,fig.pos="h"}
+test.data$Prid <- predict(mod1, test.data, type="response")
+score <- prediction(test.data$Prid,test.data$Qualityclass)
+perf <- performance(score,"tpr","fpr")
+auc <- performance(score,"auc")
+perfd <- data.frame(x= perf@x.values[1][[1]], y=perf@y.values[1][[1]])
+p1<- ggplot(perfd, aes(x= x, y=y)) + geom_line() +
+xlab("False positive rate") + ylab("True positive rate") +
+ggtitle(paste("Area under the curve:", round(auc@y.values[[1]], 3)))
+p1
+
+```
+
+```{r fit2,echo=FALSE,eval=TRUE,fig.align='center',fig.cap="\\label{fig:auc2} AUC of model 2", warning=FALSE,fig.pos="h"}
+test.data2<-test.data[,-c(4,5,6)]
+test.data$Prid2 <- predict(mod2, test.data, type="response")
+score <- prediction(test.data$Prid2,test.data$Qualityclass)
+perf <- performance(score,"tpr","fpr")
+auc <- performance(score,"auc")
+perfd <- data.frame(x= perf@x.values[1][[1]], y=perf@y.values[1][[1]])
+p2<- ggplot(perfd, aes(x= x, y=y)) + geom_line() +
+xlab("False positive rate") + ylab("True positive rate") +
+ggtitle(paste("Area under the curve:", round(auc@y.values[[1]], 3)))
+p2
+```
+
+```{r fit3,echo=FALSE,eval=TRUE,fig.align='center',fig.cap="\\label{fig:auc3} AUC of model 3", warning=FALSE,fig.pos="h"}
+test.data3$Prid <- predict(mod3, test.data3, type="response")
+score <- prediction(test.data3$Prid,test.data3$Qualityclass)
+perf <- performance(score,"tpr","fpr")
+auc <- performance(score,"auc")
+perfd <- data.frame(x= perf@x.values[1][[1]], y=perf@y.values[1][[1]])
+p3<- ggplot(perfd, aes(x= x, y=y)) + geom_line() +
+xlab("False positive rate") + ylab("True positive rate") +
+ggtitle(paste("Area under the curve:", round(auc@y.values[[1]], 3)))
+p3
+```
+
+```{r fit4,echo=FALSE,eval=TRUE,fig.align='center',fig.cap="\\label{fig:auc4} AUC of model 4", warning=FALSE,fig.pos="h"}
+test.data3$Prid2 <- predict(mod4, test.data3, type="response")
+score <- prediction(test.data3$Prid2,test.data3$Qualityclass)
+perf <- performance(score,"tpr","fpr")
+auc <- performance(score,"auc")
+perfd <- data.frame(x= perf@x.values[1][[1]], y=perf@y.values[1][[1]])
+p4<- ggplot(perfd, aes(x= x, y=y)) + geom_line() +
+xlab("False positive rate") + ylab("True positive rate") +
+ggtitle(paste("Area under the curve:", round(auc@y.values[[1]], 3)))
+p4
+```
+
+From the table of AIC and BIC we can conclude that model 2 is the model with the best performance since it has the lowest AIC and BIC. And from this model we can get the conclusion that acidity, aroma and flavor have strong influence to the quality of a coffee from a certain country.
