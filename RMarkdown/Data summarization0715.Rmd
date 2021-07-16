@@ -1,0 +1,139 @@
+---
+title: "Data summarization"
+author: "Yuqi Pan"
+output:
+  pdf_document:
+    latex_engine: pdflatex
+    number_sections: yes
+  html_document:
+    df_print: paged
+fig_caption: yes
+---
+```{r loadpackages, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(moderndive)
+library(infer)
+library(broom)
+library(knitr)
+library(gridExtra)
+library(GGally)
+library(kableExtra)
+library(corrplot)
+library(RColorBrewer)
+library(skimr)
+library(sjPlot)
+library(car)
+library(gridExtra)
+```
+
+
+# Data summarization
+
+```{r data,echo=FALSE,eval=TRUE,warning=TRUE}
+coffee<-read.csv("dataset13.csv")
+```
+
+The summary statistics are tabled below:
+
+```{r summary,echo=FALSE,eval=TRUE}
+coffee.sum<-coffee%>%select(-c(1,8))
+coffee.sum %>%
+  skim()%>%
+  select(c(2,3,5,6,7,9,11)) %>%
+  kable(col.names=c("Variables","Missing","Mean","SD","Min","Median","Max"),
+          booktabs=TRUE, linesep="", digits=2, caption = 
+          '\\label{tab:summaries1} Summary statistics on all numerical variables') %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+We noticed that there are 201 missing observations of `altitude_mean_meters` and 60 missing observations of `harvested`. We will delete these missing observations and have a new summarize statistics tabled below:
+
+```{r naomit,echo=FALSE, eval=TRUE}
+coffee.nan<-coffee%>%na.omit()
+coffee.nan<-coffee.nan%>%select(-c(1))
+coffee.nan %>%
+  select(-c(7))%>%
+  skim()%>%
+  select(c(2,3,5,6,7,9,11)) %>%
+  kable(col.names=c("Variables","Missing","Mean","SD","Min","Median","Max"),
+          booktabs=TRUE, linesep="", digits=2, caption = 
+          '\\label{tab:summaries2} Summary statistics on all numerical variables after deleting the missing value') %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+## Cleaning data
+
+From table \ref{tab:summaries2}, we found the minimum value of `aroma`, `flavor` and `acidity` are 0 but it is not consistent with normal situation. So we find this country and delete this observation.
+
+Also for the variable of `altitude_mean_meters`, the maximum value is 190164 meters and it is out of question. Even the highest mountain in the world is less than 9000 meters, we decide to remove the observations of `altitude_mean_meters` greater than 9000 meters.
+
+```{r delete, echo=FALSE, eval=TRUE}
+data <- coffee.nan %>% filter(altitude_mean_meters < 9000,
+                          aroma != 0,  
+                          flavor != 0,  
+                          acidity != 0)
+```
+
+
+The final version of out data set will be like this:
+
+```{r final, echo=FALSE,eval=TRUE}
+glimpse(data)
+data%>%
+  select(-c(7))%>%
+  skim()%>%
+  select(c(2,3,5,6,7,9,11)) %>%
+  kable(col.names=c("Variables","Missing","Mean","SD","Min","Median","Max"),
+          booktabs=TRUE, linesep="", digits=2, caption = 
+          '\\label{tab:summaries3} Summary statistics on all numerical variables after cleaning the outliers.') %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+
+```
+
+## Visualize the data
+
+After deleting the missing observations and the outliers, we will plot boxplots of `Qualityclass` against the other variables.
+
+```{r boxplots, echo=FALSE, eval=TRUE, fig.cap="\\label{fig:boxplot} Boxplot of the Qualityclass against the other feature variables.",warning=FALSE,fig.pos="h",fig.align='center'}
+p1 <- ggplot(data = data, aes(x = Qualityclass, y = aroma)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "aroma") + 
+  theme(legend.position = "none")
+p2 <- ggplot(data = data, aes(x = Qualityclass, y = flavor)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "flavor") + 
+  theme(legend.position = "none")
+p3 <- ggplot(data = data, aes(x = Qualityclass, y = acidity)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "acidity") + 
+  theme(legend.position = "none")
+p4 <- ggplot(data = data, aes(x = Qualityclass, y = category_two_defects)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "category_two_defects") + 
+  theme(legend.position = "none")
+p5 <- ggplot(data = data, aes(x = Qualityclass, y = altitude_mean_meters)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "altitude_mean_meters") + 
+  theme(legend.position = "none")
+p6<-ggplot(data = data, aes(x = Qualityclass, y = harvested)) +
+  geom_boxplot()+
+  labs(x = "quality class", y = "harvested") + 
+  theme(legend.position = "none")
+grid.arrange(p1, p2, p3, p4, p5, p6,ncol=3)
+```
+
+
+From the boxplots, we can see that the difference between quality class of good and poor against aroma, acidity and flavor is obvious since the the boxplots do not overlap with each other. But the difference of quality class of good and poor against with other variables are not significant since they have some overlap between each other. Then we would expect that aroma, acidity and flavor will have a strong influence to the quality class of a certain batch of coffee.
+
+
+\newpage
+
+The correlation plot is plotted below:
+
+```{r corr, echo=FALSE, eval=TRUE,fig.cap="\\label{fig:corrplot} Correlation plot of the variables.",fig.pos="h"}
+ggpairs(data,lower=list(continuous=wrap("points",alpha=0.4)),columnLabels = c("aroma","flavor","acidity","category","altitude","harvested","Qualityclass"))
+```
+
+From correlation plot, we notice that the correlation coefficient between acidity and flavor is 0.744 and the correlation coefficient between acidity and aroma is 0.591. We think there might be some problem with multicolinearity and we will discuss this issue in the next section.
