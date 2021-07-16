@@ -1,0 +1,313 @@
+---
+title: "coffee"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+  pdf_document:
+    latex_engine: pdflatex
+    number_sections: yes
+fig_caption: yes
+---
+
+
+```{r loadpackages, echo=FALSE, eval=TRUE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(gridExtra)
+library(kableExtra)
+library(jtools)
+library(sjPlot)
+library(car)
+```
+
+
+# introduction
+
+## Research question
+
+What influence do different features of coffee have on whether the quality of a batch of coffee is classified as good or poor?
+
+## Data description
+
+The dataset is collected from the Coffee Quality Database (CQD) of Coffee Quality Institute.  As a non-profit organisation, the institute aims to improve the quality of coffee and the lives of farmers who produce the beans. The dataset contains information on features of coffee and its production, including an overall quality score.  
+ 
+**Response variable**
+
+* `country_of_origin` – Country where the coffee bean originates from. 
+
+**Explanatory variables**
+
+* `aroma` – Aroma grade (ranging from 0-10)
+* `flavor` – Flavour grade (ranging from 0-10)
+* `acidity` – Acidity grade (ranging from 0-10) 
+* `category_two_defects` – Count of category 2 type defects in the batch of coffee beans tested.
+* `altitiude_mean_meters` – Mean altitude of the growers farm (in metres)
+* `harvested` – Year the batch was harvested
+* `Qualityclass` – Quality score for the batch (Good - >= 82.5, Poor - < 82.5). Note: 82.5 was selected as the cut off as this is the median score for all the batches tested. 
+
+
+# Data summarisation
+
+We can load in our data set and see what it looks like by using the summary function.
+
+```{r data, echo = FALSE, eval = TRUE, warning = FALSE}
+coffee <- read.csv("dataset13.csv")
+summary(coffee)
+```
+
+There are some missing values in numerical variables, 201 in `altitude_mean_meters` and 60 in `havested`. Curiously, the maximum of `altitude_mean_meters` is up to 190,164 meters; it is out of the question! It's also worth noting that some coffee beans get zero in the jugement of their features (`aroma`, `flavour`, `acidity`). We will plot histogram to show distributions of these features. 
+
+```{r hist, echo = FALSE, eval = TRUE, warning = FALSE, fig.width=12, fig.height=6, fig.align = "center", fig.pos = "H", warning = FALSE, fig.cap = "Boxplot and histogram of variables"}
+p1 <- ggplot(coffee, aes(x=aroma))+
+  geom_histogram(color = "white")
+p2 <- ggplot(coffee, aes(x=flavor))+
+  geom_histogram(color = "white")
+p3 <- ggplot(coffee, aes(x=acidity))+
+  geom_histogram(color = "white")
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+These boxplots show that most of coffee beans get grades between 6 and 8, so we can delete the observation with zero grade. Meanwhile, as mentioned earlier, we will remove outliers from our analysis. 
+
+```{r dataclean, echo = FALSE, eval = TRUE, warning = FALSE}
+data <- coffee %>% filter(#is.na(altitude_mean_meters) == FALSE, 
+                          is.na(harvested) == FALSE, 
+                          altitude_mean_meters < 9000,
+                          aroma != 0,  
+                          flavor != 0,  
+                          acidity != 0)
+```
+
+After cleaning the data, we will plot boxplots of `Qualityclass` by other features of coffee.
+
+```{r boxp, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+p1 <- ggplot(data = data, aes(x = Qualityclass, y = aroma, fill = Qualityclass)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "aroma") + 
+  theme(legend.position = "none")
+p2 <- ggplot(data = data, aes(x = Qualityclass, y = flavor, fill = Qualityclass)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "flavor") + 
+  theme(legend.position = "none")
+p3 <- ggplot(data = data, aes(x = Qualityclass, y = acidity, fill = Qualityclass)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "acidity") + 
+  theme(legend.position = "none")
+p4 <- ggplot(data = data, aes(x = Qualityclass, y = category_two_defects, fill = Qualityclass)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "category_two_defects") + 
+  theme(legend.position = "none")
+p5 <- ggplot(data = data, aes(x = Qualityclass, y = altitude_mean_meters, fill = Qualityclass)) +
+  geom_boxplot() +
+  labs(x = "quality class", y = "altitude_mean_meters") + 
+  theme(legend.position = "none")
+grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+
+
+```{r barp, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+ggplot(data = data, aes(x= Qualityclass, y = ..prop.., group = harvested, fill = harvested)) +
+  geom_bar(position="dodge", stat="count") +
+  labs(y = "proportion")
+```
+
+
+
+```{r level, echo = FALSE, eval = TRUE, warning = FALSE}
+data$Qualityclass <- factor(data$Qualityclass, levels = c("Poor", "Good"))
+#data$harvested <- factor(data$harvested, levels = c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018"))
+dat1 <- data[,-1]
+```
+
+
+# Methods
+
+Our generalised linear model is generated by a binary response variable $y_i$ with logit link function $g(·)$, that is
+
+$$ y_i \sim Bin(1,p_i), $$
+$$ g(p_i) = log\left(\frac{p_i}{1-p_i}\right) = \alpha + \sum_{i=1}^n \beta_i  x_i, $$
+
+where,
+
+* $y_i$ is the binary response variable;
+
+* $p_i$ is the probability of being good (coffee);
+
+* $1-p_i$ is the probability of being poor (coffee);
+  
+* $\alpha$ is the intercept;
+  
+* $\beta_i$ is the coefficient for the ith explanatory variable $x_i$;
+
+* $x_i$ is the ith observation of the explanatory variable;
+  
+* $n$ is the number of explanatory variables.
+
+## Log-odds
+
+**model 1**
+
+Firstly, we fit the logistic regression model with `Qualityclass` as the response and others as the explanatory variable. 
+
+```{r model1, echo = FALSE, eval = TRUE, warning = FALSE}
+mod1 <- glm(Qualityclass ~ ., data = dat1, family = binomial(link = "logit"))
+```
+
+We will calculate variance inflation factor (VIF) to detect multicollinearity of variables. The standard rule is that if VIF is greater than 10 then the multicollinearity is high.
+
+```{r vif, echo = FALSE, eval = TRUE, warning = FALSE}
+vif(mod1) %>%
+  kable(col.names = "VIF", digits = 3, align = "c",
+        caption = "Variance inflation factor (VIF)",
+        booktabs = TRUE) %>%
+kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+Since all VIF values are less than 10, we will use the full model including all variables.
+
+Let's explore the significance of the coefficients.
+
+```{r modsum, echo = FALSE, eval = TRUE, warning = FALSE}
+#mod1 %>% summary()
+summ(mod1)
+```
+
+The p-values of coefficients on `category_two_defects` (0.890) and `harvested` (0.168) are greater than 0.05, which means the two terms do not contribute significantly to this model. Let's remove `category_two_defects` first since it has larger p-value.
+
+**model 2**
+
+Remove the variable `category_two_defects`.
+
+```{r model2, echo = FALSE, eval = TRUE, warning = FALSE}
+dat2 <- dat1[,-4]
+mod2 <- glm(Qualityclass ~ ., data = dat2, family = binomial(link = "logit"))
+#mod2 %>% summary()
+summ(mod2)
+```
+
+Coefficients of `harvested` is still not up to the significance standard, so we will remove it from the model.  
+
+**model 3**
+
+Remove the variable `harvested`.
+
+```{r model3, echo = FALSE, eval = TRUE, warning = FALSE}
+dat3 <- dat2[,-5]
+mod3 <- glm(Qualityclass ~ ., data = dat3, family = binomial(link = "logit"))
+#mod3 %>% summary()
+summ(mod3)
+```
+
+Now all coefficients are significant and we are interested in producing a 95% confidence interval for these log-odds. (*Note: Due to the decimal places setting in summ function, the estimated value of `altitude_mean_meters` displayed is 0.00 rather than 0.0005.*)
+
+```{r lodds3, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+confint(mod3) %>%
+  kable()%>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod3, show.values = TRUE, transform = NULL,
+           title = "Log-Odds (Good quality of coffee)", show.p = FALSE)
+```
+
+The bound of 95% confidence interval for `altitude_mean_meters` is almost zero, so we decide to remove this variable and check if a new model could have a better performance than model 3.
+
+**model 4** 
+
+Remove the variable `altitude_mean_meters`.
+
+```{r model4, echo = FALSE, eval = TRUE, warning = FALSE}
+dat4 <- dat3[,-4]
+mod4 <- glm(Qualityclass ~ ., data = dat4, family = binomial(link = "logit"))
+#mod4 %>% summary()
+summ(mod4)
+```
+
+Produce a 95% confidence interval for these log-odds. 
+
+```{r lodds4, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+confint(mod4) %>%
+  kable()%>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod4, show.values = TRUE, transform = NULL,
+             title = "Log-Odds (Good quality of coffee)", show.p = FALSE)
+```
+
+Now for model 4, all confidence intervals are significantly different from zero, and potentially we will keep this model as the candidate of the final model.
+
+## Model selection
+
+We will calculate AIC and BIC for the four models above and prefer one which minimizes AIC and BIC.
+
+```{r comp, echo = FALSE, eval = TRUE, warning = FALSE}
+model.comp1 <- glance(mod1)
+model.comp2 <- glance(mod2)
+model.comp3 <- glance(mod3)
+model.comp4 <- glance(mod4)
+Models <- c("GLM1","GLM2","GLM3","GLM4")
+bind_rows(model.comp1, model.comp2, model.comp3, model.comp4, .id="Model") %>%
+  select(Model,AIC,BIC) %>%
+  mutate(Model=Models) %>%
+  kable(
+    digits = 3, align = "c", col.names = c("model","AIC","BIC"),
+    caption = "Model comparison values for different models",
+  ) %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+```
+
+From the table above,
+
+* If we choose AIC as the selection criterion, model 3 will be the one that we are going to select as the final model with the value of 560.263;
+
+* If we choose BIC as the selection criterion, model 4 will be the one that we will choose as the final model with the value of 583.957, but this value is close to the BIC value of model 3, which is 584.439.
+
+We've removed `altitude_mean_meters` due to suspect confidence interval. Nevertheless, AIC value suggests that model 4 is not the best choice. It seems that `aroma`, `flavor` and `acidity` can not adequately explain quality class of different coffee beans, and some of the variations can be captured by `altitude_mean_meters`. With this in mind, it is proper to add `altitude_mean_meters` into the model and choose model 3 as the final one.
+
+Now we can write our fitted model on the log-odds scale as
+
+$$ log\left(\frac{p}{1-p}\right) = -121.42 + 4.53 \cdot aroma + 7.19 \cdot flavor + 4.27 \cdot acidity + 0.0005 \cdot altitude. $$
+
+## Odds
+
+We can obtain the odds by simply exponentiating the log-odds:
+
+$$ \frac{p}{1-p} = exp(\alpha + \sum_{i=1}^n \beta_i x_i), $$
+
+then
+
+$$ \frac{p}{1-p} = exp(-121.42 + 4.53 \cdot aroma + 7.19 \cdot flavor + 4.27 \cdot acidity + 0.0005 \cdot altitude). $$
+
+```{r odds, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+mod3 %>%
+  coef() %>%
+  exp() %>%
+  kable(digits = 3, align = "c", col.names = "Odds", caption = "Odds (Good quality of coffee)") %>%
+  kable_styling(font_size=10, latex_options="HOLD_position")
+plot_model(mod3, show.values = TRUE, #axis.lim = c(1,1.5),
+           title = "Odds (Good quality of coffee)", show.p = FALSE)
+```
+
+From Odds table, the coefficient of all covariates are all positive, indicating that good quality of coffee beans is highly likely to depend on the high scores of aroma, flavor, acidity and the high mean of altitude; however, the coefficient of mean of altitude is just above 1, suggesting that this is not a strongly influential element to determine the good quality of coffee beans. We can see that the odds-ratio of flavor is substantially larger than other covariates. The coefficient of this is 1326.59. This suggests that for good and bad quality differ by 1 flavor score, the higher flavor scores' odds of good quality are 1326.59 times those of lower flavor scores. Following that, the odds of aroma and acidity are approximately 93.075 and 71.27. These illustrate that for every 1 score increase in aroma and acidity, the odds of good quality of coffee beans rises by 93.075 and 71.27, respectively.
+
+The odds-ratio plot depicts the point estimates and 95% confidence intervals. It is obvious that the confidence interval of flavor odds is the largest from about 266.9 to 7437. However, the confidence interval of the mean of altitude coefficient is the smallest; this indicates the high accuracy of this estimate. 
+
+## Probabilities
+
+To obtain the probability $p$, we can do the following transformation, that is
+
+$$ p = \frac{exp(\alpha + \sum_{i=1}^n \beta_i x_i)}{1+exp(\alpha + \sum_{i=1}^n \beta_i x_i)}, $$
+
+then
+
+$$ p = \frac{exp(-121.42 + 4.53 \cdot aroma + 7.19 \cdot flavor + 4.27 \cdot acidity + 0.0005 \cdot altitude)}{1+exp(-121.42 + 4.53 \cdot aroma + 7.19 \cdot flavor + 4.27 \cdot acidity + 0.0005 \cdot altitude)}. $$
+
+Finally, we can plot the probability of being good.
+
+```{r prob, echo = FALSE, eval = TRUE, warning = FALSE, fig.pos = "H"}
+dat3 <- dat3 %>% mutate(probs.good = fitted(mod3))
+p <- plot_model(mod3, type = "pred", title = "")
+plot_grid(p)
+```
+
+All curved prediction lines show that the probability approaches 100% the smaller the explanatory variables get, and approaches 0 the larger the explanatory get.
+
+
