@@ -10,7 +10,7 @@ Allocated with a dataset from Coffee Quality Database (CQD), we intend to invest
 
 You can see the final edition of code stored in [Group_13_Analysis.rmd](Group_13_Analysis.rmd).
 
-## Maintainers and Collabrators
+## Maintainers and Collaborators
 
 - [@shuqicao](https://github.com/shuqicao).
 - [@Jack](https://github.com/Aurelius1015).
